@@ -1,13 +1,33 @@
+import mysql.connector.errors
 from flask import Flask, render_template, request, escape
 from vsearch import search4letters
 
+from DBcm import UseDatabase
+
 app = Flask(__name__)
+
+app.config['dbconfig'] = {'host': '127.0.0.1',
+                          'user': 'vsearch',
+                          'password': 'vsearchpassword',
+                          'database': 'vsearchlogDB', }
 
 
 def log_request(req: 'flask_request', res: str) -> None:
     """Log details of the web request and the results."""
-    with open('vsearch.log', 'a') as log:
-        print(req.form, req.remote_addr, req.user_agent, res, file=log, sep='|')
+    with UseDatabase(app.config['dbconfig']) as cursor:
+        _SQL = """insert into log
+                  (phrase, letters, ip, browser_string, results)
+                  values
+                  (%s, %s, %s, %s, %s)"""
+        try:
+            browser_string = req.user_agent.browser if req.user_agent.browser else 'Unknown'
+            cursor.execute(_SQL, (req.form['phrase'],
+                                  req.form['letters'],
+                                  req.remote_addr,
+                                  browser_string,
+                                  res, ))
+        except mysql.connector.errors.IntegrityError as e:
+            print("IntegrityError:", e)
 
 
 @app.route('/search_for', methods=['POST'])
@@ -36,14 +56,12 @@ def entry_page() -> 'html':
 @app.route('/viewlog')
 def view_the_log() -> 'html':
     """Display the contents of the log file as a HTML table."""
-    contents = []
-    with open('vsearch.log') as log:
-        for line in log:
-            contents.append([])
-            for item in line.split('|'):
-                contents[-1].append(escape(item))
-    titles = ('Form Data', 'Remote_addr', 'User_agent', 'Results')
-    print(contents)
+    with UseDatabase(app.config['dbconfig']) as cursor:
+        _SQL = """select phrase, letters, ip, browser_string, results
+                  from log"""
+        cursor.execute(_SQL)
+        contents = cursor.fetchall()
+    titles = ('Phrase', 'Letters', 'Remote_addr', 'User_agent', 'Results')
     return render_template('viewlog.html',
                            the_title='View Log',
                            the_row_titles=titles,
